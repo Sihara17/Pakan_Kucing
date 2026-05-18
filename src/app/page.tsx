@@ -2,729 +2,534 @@
 
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
-import { Calculator, Download, Shield, AlertTriangle, CheckCircle2, Info } from 'lucide-react'
-import * as XLSX from 'xlsx'
-import { format } from 'date-fns'
+import { 
+  Bot, 
+  Lightbulb, 
+  Fish, 
+  Power, 
+  PowerOff, 
+  Clock, 
+  Zap, 
+  Terminal,
+  Menu,
+  X,
+  ChevronRight,
+  Activity,
+  Calendar,
+  Bell,
+  Settings
+} from 'lucide-react'
+import { toast } from 'sonner'
+import { useTheme } from 'next-themes'
+import { useIsMobile } from '@/hooks/use-mobile'
 
-// Tipe data untuk hasil perhitungan
-interface NIOSHResult {
-  LC: number
-  HM: number
-  VM: number
-  DM: number
-  AM: number
-  FM: number
-  CM: number
-  RWL: number
-  LI: number
-  riskCategory: 'safe' | 'medium' | 'high'
+interface Schedule {
+  type: 'lampu' | 'pakan'
+  action: 'on' | 'off' | 'feed'
+  time: string
+  chatId: number
+  createdAt: string
+  lastTriggered?: string
 }
 
-// Tipe data untuk input form
-interface FormData {
-  jobName: string
-  location: string
-  analysisDate: string
-  analyst: string
-  loadWeight: number
-  horizontalDistance: number
-  verticalHeight: number
-  verticalTravelDistance: number
-  asymmetricAngle: number
-  frequency: number
-  duration: string
-  coupling: string
+interface LogEntry {
+  id: number
+  timestamp: string
+  type: 'info' | 'success' | 'warning' | 'error'
+  message: string
 }
 
-// Faktor FM berdasarkan frekuensi dan durasi (tabel NIOSH)
-function getFM(frequency: number, duration: string): number {
-  const freq = Math.round(frequency)
-  const durationMap: Record<string, number> = {
-    '≤1 jam': 1,
-    '1-2 jam': 2,
-    '2-8 jam': 3
+export default function SyncroCommandDashboard() {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const isMobile = useIsMobile()
+  const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+  
+  // Status states
+  const [lampStatus, setLampStatus] = useState<'on' | 'off'>('off')
+  const [feedStatus, setFeedStatus] = useState<'idle' | 'feeding'>('idle')
+  const [botStatus, setBotStatus] = useState<'online' | 'offline'>('online')
+  
+  // Schedule states
+  const [schedules, setSchedules] = useState<Schedule[]>([])
+  const [currentTime, setCurrentTime] = useState('')
+  
+  // Terminal logs
+  const [logs, setLogs] = useState<LogEntry[]>([
+    { id: 1, timestamp: new Date().toISOString(), type: 'info', message: 'SyncroCommand System initialized' },
+    { id: 2, timestamp: new Date().toISOString(), type: 'success', message: 'Telegram Bot connected' },
+    { id: 3, timestamp: new Date().toISOString(), type: 'info', message: 'Automation system ready' },
+  ])
+  
+  useEffect(() => {
+    setMounted(true)
+    fetchSchedules()
+    updateTime()
+    
+    const timeInterval = setInterval(updateTime, 1000)
+    const scheduleInterval = setInterval(fetchSchedules, 30000) // Refresh every 30s
+    
+    return () => {
+      clearInterval(timeInterval)
+      clearInterval(scheduleInterval)
+    }
+  }, [])
+  
+  useEffect(() => {
+    if (isMobile) {
+      setIsSidebarOpen(false)
+    }
+  }, [isMobile])
+  
+  function updateTime() {
+    const now = new Date()
+    const jakartaTime = now.toLocaleString('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+    setCurrentTime(jakartaTime)
   }
-  const durationKey = duration
-
-  // Tabel FM NIOSH
-  const fmTable: Record<string, Record<number, number>> = {
-    1: { 0.2: 1.00, 0.5: 0.97, 1: 0.94, 2: 0.91, 3: 0.88, 4: 0.84, 5: 0.81, 6: 0.78, 7: 0.75, 8: 0.73, 9: 0.70, 10: 0.68, 11: 0.66, 12: 0.64, 13: 0.62, 14: 0.60, 15: 0.59 },
-    2: { 0.2: 0.95, 0.5: 0.92, 1: 0.88, 2: 0.84, 3: 0.81, 4: 0.77, 5: 0.74, 6: 0.71, 7: 0.68, 8: 0.66, 9: 0.64, 10: 0.62, 11: 0.60, 12: 0.58, 13: 0.57, 14: 0.55, 15: 0.54 },
-    3: { 0.2: 0.85, 0.5: 0.81, 1: 0.78, 2: 0.74, 3: 0.70, 4: 0.66, 5: 0.63, 6: 0.60, 7: 0.58, 8: 0.56, 9: 0.54, 10: 0.52, 11: 0.50, 12: 0.49, 13: 0.47, 14: 0.46, 15: 0.45 }
+  
+  function addLog(type: LogEntry['type'], message: string) {
+    const newLog: LogEntry = {
+      id: logs.length + 1,
+      timestamp: new Date().toISOString(),
+      type,
+      message,
+    }
+    setLogs(prev => [newLog, ...prev].slice(0, 50)) // Keep last 50 logs
   }
-
-  const durationValues = fmTable[durationKey] || fmTable[1]
-
-  // Cari frekuensi terdekat
-  const freqs = Object.keys(durationValues).map(Number).sort((a, b) => a - b)
-  const closestFreq = freqs.reduce((prev, curr) => {
-    return Math.abs(curr - freq) < Math.abs(prev - freq) ? curr : prev
-  })
-
-  return durationValues[closestFreq] || 0.70
-}
-
-// Faktor CM berdasarkan kualitas coupling
-function getCM(coupling: string): number {
-  const cmMap: Record<string, number> = {
-    'Good': 1.0,
-    'Fair': 0.95,
-    'Poor': 0.90
-  }
-  return cmMap[coupling] || 0.95
-}
-
-// Fungsi utama untuk menghitung NIOSH
-function calculateNIOSH(data: FormData): NIOSHResult {
-  const LC = 23 // Load Constant
-
-  // Horizontal Multiplier: HM = 25 / H
-  const HM = Math.min(25 / data.horizontalDistance, 1.0)
-
-  // Vertical Multiplier: VM = 1 − 0.003 × |V − 75|
-  const VM = 1 - 0.003 * Math.abs(data.verticalHeight - 75)
-  const VM_clamped = Math.max(VM, 0)
-
-  // Distance Multiplier: DM = 0.82 + (4.5 / D)
-  const DM = 0.82 + (4.5 / data.verticalTravelDistance)
-  const DM_clamped = Math.min(Math.max(DM, 0), 1.0)
-
-  // Asymmetric Multiplier: AM = 1 − 0.0032 × A
-  const AM = 1 - 0.0032 * data.asymmetricAngle
-  const AM_clamped = Math.max(AM, 0)
-
-  // Frequency Multiplier (dari tabel)
-  const FM = getFM(data.frequency, data.duration)
-
-  // Coupling Multiplier
-  const CM = getCM(data.coupling)
-
-  // Recommended Weight Limit: RWL = LC × HM × VM × DM × AM × FM × CM
-  const RWL = LC * HM * VM_clamped * DM_clamped * AM_clamped * FM * CM
-
-  // Lifting Index: LI = Load Weight / RWL
-  const LI = data.loadWeight / RWL
-
-  // Tentukan kategori risiko
-  let riskCategory: 'safe' | 'medium' | 'high' = 'high'
-  if (LI <= 1.0) {
-    riskCategory = 'safe'
-  } else if (LI <= 3.0) {
-    riskCategory = 'medium'
-  } else {
-    riskCategory = 'high'
-  }
-
-  return {
-    LC,
-    HM,
-    VM: VM_clamped,
-    DM: DM_clamped,
-    AM: AM_clamped,
-    FM,
-    CM,
-    RWL,
-    LI,
-    riskCategory
-  }
-}
-
-// Fungsi untuk export ke Excel
-function exportToExcel(data: FormData, result: NIOSHResult) {
-  // Sheet 1: DATA INPUT
-  const inputData = [
-    ['DATA INPUT MANUAL LIFTING', '', ''],
-    ['', '', ''],
-    ['Data Umum', '', ''],
-    ['Nama Pekerjaan', data.jobName, ''],
-    ['Lokasi Kerja', data.location, ''],
-    ['Tanggal Analisis', data.analysisDate, ''],
-    ['Analis / Evaluator', data.analyst, ''],
-    ['', '', ''],
-    ['Parameter', 'Nilai', 'Satuan'],
-    ['Berat Beban', data.loadWeight, 'kg'],
-    ['Horizontal Distance (H)', data.horizontalDistance, 'cm'],
-    ['Vertical Height (V)', data.verticalHeight, 'cm'],
-    ['Vertical Travel Distance (D)', data.verticalTravelDistance, 'cm'],
-    ['Asymmetric Angle (A)', data.asymmetricAngle, 'derajat'],
-    ['Frekuensi Lifting', data.frequency, 'lift/menit'],
-    ['Durasi Kerja', data.duration, ''],
-    ['Kualitas Coupling', data.coupling, '']
-  ]
-
-  const wsInput = XLSX.utils.aoa_to_sheet(inputData)
-
-  // Set width column
-  wsInput['!cols'] = [
-    { wch: 25 },
-    { wch: 20 },
-    { wch: 10 }
-  ]
-
-  // Bold headers
-  wsInput['A1'].s = { font: { bold: true, sz: 14 } }
-  wsInput['A5'].s = { font: { bold: true } }
-  wsInput['A13'].s = { font: { bold: true } }
-  wsInput['B13'].s = { font: { bold: true } }
-  wsInput['C13'].s = { font: { bold: true } }
-
-  // Sheet 2: FAKTOR NIOSH
-  const factorData = [
-    ['FAKTOR NIOSH', '', ''],
-    ['', '', ''],
-    ['Faktor', 'Nilai', 'Deskripsi'],
-    ['LC (Load Constant)', result.LC.toFixed(2), 'Konstanta beban dasar'],
-    ['HM (Horizontal Multiplier)', result.HM.toFixed(3), `25 / ${data.horizontalDistance}`],
-    ['VM (Vertical Multiplier)', result.VM.toFixed(3), `1 − 0.003 × |${data.verticalHeight} − 75|`],
-    ['DM (Distance Multiplier)', result.DM.toFixed(3), `0.82 + (4.5 / ${data.verticalTravelDistance})`],
-    ['AM (Asymmetric Multiplier)', result.AM.toFixed(3), `1 − 0.0032 × ${data.asymmetricAngle}`],
-    ['FM (Frequency Multiplier)', result.FM.toFixed(3), `${data.frequency} lift/menit, ${data.duration}`],
-    ['CM (Coupling Multiplier)', result.CM.toFixed(2), data.coupling]
-  ]
-
-  const wsFactors = XLSX.utils.aoa_to_sheet(factorData)
-  wsFactors['!cols'] = [
-    { wch: 25 },
-    { wch: 20 },
-    { wch: 40 }
-  ]
-
-  wsFactors['A1'].s = { font: { bold: true, sz: 14 } }
-  wsFactors['A3'].s = { font: { bold: true } }
-  wsFactors['B3'].s = { font: { bold: true } }
-  wsFactors['C3'].s = { font: { bold: true } }
-
-  // Sheet 3: HASIL ANALISIS
-  const riskColor = result.riskCategory === 'safe' ? 'Hijau' : result.riskCategory === 'medium' ? 'Kuning' : 'Merah'
-  const resultData = [
-    ['HASIL ANALISIS ERGONOMI', '', ''],
-    ['', '', ''],
-    ['Parameter', 'Nilai', 'Keterangan'],
-    ['Recommended Weight Limit (RWL)', `${result.RWL.toFixed(2)} kg`, 'Beban maksimal yang direkomendasikan'],
-    ['Lifting Index (LI)', result.LI.toFixed(2), 'Rasio beban terhadap RWL'],
-    ['', '', ''],
-    ['KATEGORI RISIKO', '', ''],
-    ['Kategori', result.riskCategory.toUpperCase(), `Indikator: ${riskColor}`],
-    ['', '', ''],
-    ['', '', ''],
-    ['STATUS RISIKO:', '', ''],
-    [result.riskCategory === 'safe' ? 'AMAN' : result.riskCategory === 'medium' ? 'RISIKO SEDANG' : 'RISIKO TINGGI', '', '']
-  ]
-
-  const wsResults = XLSX.utils.aoa_to_sheet(resultData)
-  wsResults['!cols'] = [
-    { wch: 25 },
-    { wch: 20 },
-    { wch: 40 }
-  ]
-
-  wsResults['A1'].s = { font: { bold: true, sz: 14 } }
-  wsResults['A3'].s = { font: { bold: true } }
-  wsResults['B3'].s = { font: { bold: true } }
-  wsResults['C3'].s = { font: { bold: true } }
-  wsResults['A7'].s = { font: { bold: true } }
-  wsResults['B7'].s = { font: { bold: true } }
-  wsResults['A10'].s = { font: { bold: true, sz: 12 } }
-
-  // Apply conditional formatting colors
-  if (result.riskCategory === 'safe') {
-    wsResults['A12'].s = { font: { bold: true, color: { rgb: '008000' } } }
-  } else if (result.riskCategory === 'medium') {
-    wsResults['A12'].s = { font: { bold: true, color: { rgb: 'FFA500' } } }
-  } else {
-    wsResults['A12'].s = { font: { bold: true, color: { rgb: 'FF0000' } } }
-  }
-
-  // Sheet 4: DISCLAIMER
-  const disclaimerData = [
-    ['DISCLAIMER K3 (Keselamatan dan Kesehatan Kerja)', '', ''],
-    ['', '', ''],
-    ['Alat ini dikembangkan berdasarkan persamaan lifting NIOSH (National Institute for Occupational Safety and Health).', '', ''],
-    ['', '', ''],
-    ['1. Hasil perhitungan ini adalah estimasi dan harus digunakan sebagai panduan awal dalam assessment ergonomi.', '', ''],
-    ['', '', ''],
-    ['2. Kalkulator ini tidak menggantikan assessment ergonomi yang dilakukan oleh profesional K3 yang tersertifikasi.', '', ''],
-    ['', '', ''],
-    ['3. Perusahaan/individu yang menggunakan alat ini bertanggung jawab penuh atas penggunaan dan interpretasi hasilnya.', '', ''],
-    ['', '', ''],
-    ['4. Untuk kondisi kerja yang kompleks atau hasil yang menunjukkan risiko tinggi, disarankan melakukan assessment', '', ''],
-    ['   ergonomi menyeluruh oleh ahli K3.', '', ''],
-    ['', '', ''],
-    ['5. Konsultasikan dengan profesional K3 dan tenaga kerja terkait untuk perbaikan ergonomi dan kontrol risiko.', '', ''],
-    ['', '', ''],
-    ['', '', ''],
-    ['Dibuat:', format(new Date(), 'dd MMMM yyyy'), ''],
-    ['Oleh:', data.analyst, '']
-  ]
-
-  const wsDisclaimer = XLSX.utils.aoa_to_sheet(disclaimerData)
-  wsDisclaimer['!cols'] = [
-    { wch: 80 },
-    { wch: 10 },
-    { wch: 20 }
-  ]
-
-  wsDisclaimer['A1'].s = { font: { bold: true, sz: 12 } }
-
-  // Buat workbook
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, wsInput, 'DATA INPUT')
-  XLSX.utils.book_append_sheet(wb, wsFactors, 'FAKTOR NIOSH')
-  XLSX.utils.book_append_sheet(wb, wsResults, 'HASIL ANALISIS')
-  XLSX.utils.book_append_sheet(wb, wsDisclaimer, 'DISCLAIMER')
-
-  // Generate nama file dengan tanggal
-  const fileName = `WISHA_Lifting_Assessment_${format(new Date(), 'yyyyMMdd')}.xlsx`
-
-  // Download file
-  XLSX.writeFile(wb, fileName)
-}
-
-export default function Home() {
-  const [formData, setFormData] = useState<FormData>({
-    jobName: '',
-    location: '',
-    analysisDate: format(new Date(), 'yyyy-MM-dd'),
-    analyst: '',
-    loadWeight: 0,
-    horizontalDistance: 63, // default NIOSH
-    verticalHeight: 75, // default NIOSH
-    verticalTravelDistance: 25, // default NIOSH
-    asymmetricAngle: 0,
-    frequency: 0.2,
-    duration: '1-2 jam',
-    coupling: 'Fair'
-  })
-
-  const [result, setResult] = useState<NIOSHResult | null>(null)
-
-  const handleCalculate = () => {
-    const calculationResult = calculateNIOSH(formData)
-    setResult(calculationResult)
-  }
-
-  const handleExport = () => {
-    if (result) {
-      exportToExcel(formData, result)
+  
+  async function fetchSchedules() {
+    try {
+      const response = await fetch('/api/schedule')
+      if (response.ok) {
+        const data = await response.json()
+        if (data.allSchedules) {
+          setSchedules(data.allSchedules)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch schedules:', error)
     }
   }
-
-  const handleReset = () => {
-    setFormData({
-      jobName: '',
-      location: '',
-      analysisDate: format(new Date(), 'yyyy-MM-dd'),
-      analyst: '',
-      loadWeight: 0,
-      horizontalDistance: 63,
-      verticalHeight: 75,
-      verticalTravelDistance: 25,
-      asymmetricAngle: 0,
-      frequency: 0.2,
-      duration: '1-2 jam',
-      coupling: 'Fair'
-    })
-    setResult(null)
+  
+  async function sendTelegramCommand(command: string) {
+    try {
+      addLog('info', `Sending command: ${command}`)
+      
+      const response = await fetch('/api/telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: command }),
+      })
+      
+      if (response.ok) {
+        addLog('success', `Command sent: ${command}`)
+        toast.success('Command sent successfully!')
+      } else {
+        throw new Error('Failed to send command')
+      }
+    } catch (error) {
+      addLog('error', `Failed to send: ${command}`)
+      toast.error('Failed to send command')
+    }
   }
-
+  
+  async function toggleLamp() {
+    const newStatus = lampStatus === 'on' ? 'off' : 'on'
+    setLampStatus(newStatus)
+    
+    const command = newStatus === 'on' ? '/lampuon' : '/lampuoff'
+    await sendTelegramCommand(command)
+    
+    addLog('success', `Lamp turned ${newStatus.toUpperCase()}`)
+    toast.success(`Lamp ${newStatus.toUpperCase()}`)
+  }
+  
+  async function triggerFeed() {
+    setFeedStatus('feeding')
+    await sendTelegramCommand('/pakan')
+    addLog('success', 'Feeding triggered')
+    toast.success('Feed triggered!')
+    
+    setTimeout(() => {
+      setFeedStatus('idle')
+    }, 2000)
+  }
+  
+  async function handleQuickCommand(command: string, description: string) {
+    await sendTelegramCommand(command)
+    toast.success(description)
+  }
+  
+  function getLogColor(type: LogEntry['type']) {
+    switch (type) {
+      case 'success': return 'text-green-400'
+      case 'warning': return 'text-yellow-400'
+      case 'error': return 'text-red-400'
+      default: return 'text-blue-400'
+    }
+  }
+  
+  function getLogIcon(type: LogEntry['type']) {
+    switch (type) {
+      case 'success': return '✓'
+      case 'warning': return '⚠'
+      case 'error': return '✕'
+      default: return '→'
+    }
+  }
+  
+  if (!mounted) {
+    return null
+  }
+  
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-gray-50 to-white">
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950/20 to-slate-950 text-white">
       {/* Header */}
-      <header className="bg-primary text-primary-foreground py-6 px-4 shadow-lg">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center gap-3 mb-2">
-            <Calculator className="w-8 h-8" />
-            <h1 className="text-3xl font-bold">NIOSH-based Lifting Calculator</h1>
+      <header className="fixed top-0 left-0 right-0 z-50 glass border-b border-purple-500/20">
+        <div className="flex items-center justify-between px-4 md:px-6 py-4">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden"
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            >
+              {isSidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </Button>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Zap className="h-6 w-6 text-purple-400" />
+                <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+              </div>
+              <div>
+                <h1 className="text-lg md:text-xl font-bold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
+                  SyncroCommand
+                </h1>
+                <p className="text-xs text-muted-foreground">Pet Automation System</p>
+              </div>
+            </div>
           </div>
-          <p className="text-primary-foreground/80">
-            Alat assessment ergonomi manual lifting untuk evaluasi risiko K3
-          </p>
+          
+          <div className="flex items-center gap-3">
+            <Badge variant="outline" className="glass">
+              <Clock className="h-3 w-3 mr-1" />
+              {currentTime}
+            </Badge>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              {theme === 'dark' ? <Lightbulb className="h-4 w-4" /> : <Lightbulb className="h-4 w-4 fill-current" />}
+            </Button>
+          </div>
         </div>
       </header>
-
-      {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-8">
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Left Column - Input Form */}
-          <div className="space-y-6">
-            {/* General Data */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Info className="w-5 h-5" />
-                  Data Umum
-                </CardTitle>
-                <CardDescription>Informasi dasar pekerjaan dan analisis</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="jobName">Nama Pekerjaan</Label>
-                    <Input
-                      id="jobName"
-                      value={formData.jobName}
-                      onChange={(e) => setFormData({ ...formData, jobName: e.target.value })}
-                      placeholder="Contoh: Pemindahan Box A"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="location">Lokasi Kerja</Label>
-                    <Input
-                      id="location"
-                      value={formData.location}
-                      onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                      placeholder="Contoh: Gudang A"
-                    />
-                  </div>
+      
+      <div className="flex pt-16">
+        {/* Sidebar */}
+        <aside className={`
+          fixed md:static inset-y-0 left-0 z-40 w-64 glass border-r border-purple-500/20
+          transform transition-transform duration-300 ease-in-out
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0
+        `}>
+          <div className="flex flex-col h-full pt-16 md:pt-0">
+            <div className="p-4 border-b border-purple-500/20">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Activity className="h-4 w-4" />
+                <span>System Status</span>
+              </div>
+            </div>
+            
+            <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+              <Button variant="ghost" className="w-full justify-start" onClick={() => {}}>
+                <Activity className="mr-2 h-4 w-4" />
+                Dashboard
+              </Button>
+              <Button variant="ghost" className="w-full justify-start" onClick={() => {}}>
+                <Calendar className="mr-2 h-4 w-4" />
+                Schedules
+              </Button>
+              <Button variant="ghost" className="w-full justify-start" onClick={() => {}}>
+                <Bell className="mr-2 h-4 w-4" />
+                Notifications
+              </Button>
+              <Button variant="ghost" className="w-full justify-start" onClick={() => {}}>
+                <Terminal className="mr-2 h-4 w-4" />
+                Logs
+              </Button>
+              <Button variant="ghost" className="w-full justify-start" onClick={() => {}}>
+                <Settings className="mr-2 h-4 w-4" />
+                Settings
+              </Button>
+            </nav>
+            
+            <div className="p-4 border-t border-purple-500/20">
+              <div className="glass rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Bot Status</span>
+                  <Badge className={botStatus === 'online' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}>
+                    {botStatus === 'online' ? 'Online' : 'Offline'}
+                  </Badge>
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="analysisDate">Tanggal Analisis</Label>
-                    <Input
-                      id="analysisDate"
-                      type="date"
-                      value={formData.analysisDate}
-                      onChange={(e) => setFormData({ ...formData, analysisDate: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="analyst">Analis / Evaluator</Label>
-                    <Input
-                      id="analyst"
-                      value={formData.analyst}
-                      onChange={(e) => setFormData({ ...formData, analyst: e.target.value })}
-                      placeholder="Nama analis"
-                    />
-                  </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Active Schedules</span>
+                  <span className="font-mono text-purple-400">{schedules.length}</span>
                 </div>
-              </CardContent>
-            </Card>
-
-            {/* Lifting Data */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Shield className="w-5 h-5" />
-                  Data Lifting
-                </CardTitle>
-                <CardDescription>Parameter lifting untuk perhitungan NIOSH</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="loadWeight">Berat Beban (kg)</Label>
-                  <Input
-                    id="loadWeight"
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    value={formData.loadWeight || ''}
-                    onChange={(e) => setFormData({ ...formData, loadWeight: parseFloat(e.target.value) || 0 })}
-                    placeholder="Masukkan berat beban dalam kg"
-                  />
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="horizontalDistance">
-                      Horizontal Distance - H (cm)
-                    </Label>
-                    <Input
-                      id="horizontalDistance"
-                      type="number"
-                      step="1"
-                      min="0"
-                      value={formData.horizontalDistance}
-                      onChange={(e) => setFormData({ ...formData, horizontalDistance: parseFloat(e.target.value) || 0 })}
-                      placeholder="Default: 63"
-                    />
-                    <p className="text-xs text-muted-foreground">Jarak horizontal dari pusat beban ke tubuh</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="verticalHeight">
-                      Vertical Height - V (cm)
-                    </Label>
-                    <Input
-                      id="verticalHeight"
-                      type="number"
-                      step="1"
-                      min="0"
-                      value={formData.verticalHeight}
-                      onChange={(e) => setFormData({ ...formData, verticalHeight: parseFloat(e.target.value) || 0 })}
-                      placeholder="Default: 75"
-                    />
-                    <p className="text-xs text-muted-foreground">Tinggi vertikal awal dari lantai</p>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="verticalTravelDistance">
-                      Vertical Travel Distance - D (cm)
-                    </Label>
-                    <Input
-                      id="verticalTravelDistance"
-                      type="number"
-                      step="1"
-                      min="0"
-                      value={formData.verticalTravelDistance}
-                      onChange={(e) => setFormData({ ...formData, verticalTravelDistance: parseFloat(e.target.value) || 0 })}
-                      placeholder="Default: 25"
-                    />
-                    <p className="text-xs text-muted-foreground">Jarak perjalanan vertikal beban</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="asymmetricAngle">
-                      Asymmetric Angle - A (derajat)
-                    </Label>
-                    <Input
-                      id="asymmetricAngle"
-                      type="number"
-                      step="1"
-                      min="0"
-                      max="135"
-                      value={formData.asymmetricAngle}
-                      onChange={(e) => setFormData({ ...formData, asymmetricAngle: parseFloat(e.target.value) || 0 })}
-                      placeholder="Default: 0"
-                    />
-                    <p className="text-xs text-muted-foreground">Sudut putar tubuh saat lifting</p>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="frequency">Frekuensi (lift/menit)</Label>
-                    <Input
-                      id="frequency"
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="15"
-                      value={formData.frequency}
-                      onChange={(e) => setFormData({ ...formData, frequency: parseFloat(e.target.value) || 0 })}
-                      placeholder="Default: 0.2"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="duration">Durasi Kerja</Label>
-                    <Select
-                      value={formData.duration}
-                      onValueChange={(value) => setFormData({ ...formData, duration: value })}
-                    >
-                      <SelectTrigger id="duration">
-                        <SelectValue placeholder="Pilih durasi" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="≤1 jam">≤ 1 jam</SelectItem>
-                        <SelectItem value="1-2 jam">1 - 2 jam</SelectItem>
-                        <SelectItem value="2-8 jam">2 - 8 jam</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="coupling">Kualitas Coupling</Label>
-                  <Select
-                    value={formData.coupling}
-                    onValueChange={(value) => setFormData({ ...formData, coupling: value })}
-                  >
-                    <SelectTrigger id="coupling">
-                      <SelectValue placeholder="Pilih kualitas coupling" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Good">Good (Baik)</SelectItem>
-                      <SelectItem value="Fair">Fair (Sedang)</SelectItem>
-                      <SelectItem value="Poor">Poor (Buruk)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Good: Pegangan yang optimal, Fair: Pegangan yang cukup, Poor: Pegangan yang buruk
-                  </p>
-                </div>
-
-                <Separator />
-
-                <div className="flex gap-2">
-                  <Button onClick={handleCalculate} className="flex-1" size="lg">
-                    <Calculator className="w-4 h-4 mr-2" />
-                    Hitung Analisis
-                  </Button>
-                  <Button onClick={handleReset} variant="outline" size="lg">
-                    Reset
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </div>
-
-          {/* Right Column - Results */}
-          <div className="space-y-6">
-            {/* Results Card */}
-            <Card className="sticky top-4">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5" />
-                  Hasil Analisis
-                </CardTitle>
-                <CardDescription>Hasil perhitungan NIOSH lifting equation</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {result ? (
-                  <>
-                    {/* Risk Category Badge */}
-                    <div className="text-center py-6">
-                      <div className={`inline-flex items-center gap-2 px-6 py-3 rounded-full text-lg font-bold ${
-                        result.riskCategory === 'safe'
-                          ? 'bg-green-100 text-green-700 border-2 border-green-500'
-                          : result.riskCategory === 'medium'
-                          ? 'bg-yellow-100 text-yellow-700 border-2 border-yellow-500'
-                          : 'bg-red-100 text-red-700 border-2 border-red-500'
-                      }`}>
-                        {result.riskCategory === 'safe' && <CheckCircle2 className="w-6 h-6" />}
-                        {result.riskCategory === 'medium' && <AlertTriangle className="w-6 h-6" />}
-                        {result.riskCategory === 'high' && <AlertTriangle className="w-6 h-6" />}
-                        <span>
-                          {result.riskCategory === 'safe' ? 'AMAN' : result.riskCategory === 'medium' ? 'RISIKO SEDANG' : 'RISIKO TINGGI'}
-                        </span>
-                      </div>
-                      <p className="mt-3 text-sm text-muted-foreground">
-                        {result.riskCategory === 'safe' && 'Kondisi kerja aman, risiko ergonomi rendah'}
-                        {result.riskCategory === 'medium' && 'Perlu perhatian, sebaiknya dilakukan perbaikan ergonomi'}
-                        {result.riskCategory === 'high' && 'Risiko tinggi, segera lakukan perbaikan ergonomi'}
-                      </p>
-                    </div>
-
-                    <Separator />
-
-                    {/* Main Results */}
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                        <div>
-                          <p className="text-sm text-muted-foreground">RWL (Recommended Weight Limit)</p>
-                          <p className="text-xs text-muted-foreground">Beban maksimal yang direkomendasikan</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-2xl font-bold">{result.RWL.toFixed(2)} kg</p>
-                        </div>
-                      </div>
-
-                      <div className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                        <div>
-                          <p className="text-sm text-muted-foreground">LI (Lifting Index)</p>
-                          <p className="text-xs text-muted-foreground">Rasio beban terhadap RWL</p>
-                        </div>
-                        <div className="text-right">
-                          <p className={`text-2xl font-bold ${
-                            result.LI <= 1.0 ? 'text-green-600' : result.LI <= 3.0 ? 'text-yellow-600' : 'text-red-600'
-                          }`}>
-                            {result.LI.toFixed(2)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <Separator />
-
-                    {/* NIOSH Factors */}
-                    <div>
-                      <h3 className="font-semibold mb-3">Faktor NIOSH</h3>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">LC (Load Constant)</span>
-                          <span className="font-medium">{result.LC} kg</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">HM (Horizontal Multiplier)</span>
-                          <span className="font-medium">{result.HM.toFixed(3)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">VM (Vertical Multiplier)</span>
-                          <span className="font-medium">{result.VM.toFixed(3)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">DM (Distance Multiplier)</span>
-                          <span className="font-medium">{result.DM.toFixed(3)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">AM (Asymmetric Multiplier)</span>
-                          <span className="font-medium">{result.AM.toFixed(3)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">FM (Frequency Multiplier)</span>
-                          <span className="font-medium">{result.FM.toFixed(3)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">CM (Coupling Multiplier)</span>
-                          <span className="font-medium">{result.CM.toFixed(2)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <Separator />
-
-                    {/* Risk Scale */}
-                    <div>
-                      <h3 className="font-semibold mb-3">Skala Risiko</h3>
-                      <div className="flex gap-2">
-                        <Badge className="flex-1 justify-center py-2 bg-green-500 hover:bg-green-600">
-                          LI &lt;= 1.0: Aman
-                        </Badge>
-                        <Badge className="flex-1 justify-center py-2 bg-yellow-500 hover:bg-yellow-600">
-                          1.0 &lt; LI &lt;= 3.0: Sedang
-                        </Badge>
-                        <Badge className="flex-1 justify-center py-2 bg-red-500 hover:bg-red-600">
-                          LI &gt; 3.0: Tinggi
-                        </Badge>
-                      </div>
-                    </div>
-
-                    {/* Export Button */}
+        </aside>
+        
+        {/* Main Content */}
+        <main className="flex-1 p-4 md:p-6 overflow-auto">
+          <div className="max-w-7xl mx-auto space-y-6">
+            {/* Status Cards */}
+            <div className="grid gap-4 md:grid-cols-3">
+              {/* Lamp Status */}
+              <Card className="glass cyber-border">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <Lightbulb className="h-4 w-4 text-yellow-400" />
+                      Lamp Status
+                    </CardTitle>
+                    <Badge className={lampStatus === 'on' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' : 'bg-slate-500/20 text-slate-400 border-slate-500/30'}>
+                      {lampStatus.toUpperCase()}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-2">
                     <Button
-                      onClick={handleExport}
-                      className="w-full"
-                      size="lg"
-                      variant="default"
+                      size="sm"
+                      variant={lampStatus === 'on' ? 'default' : 'outline'}
+                      className="flex-1"
+                      onClick={toggleLamp}
+                      disabled={lampStatus === 'on'}
                     >
-                      <Download className="w-4 h-4 mr-2" />
-                      Export ke Excel
+                      <Power className="h-4 w-4 mr-1" />
+                      ON
                     </Button>
-                  </>
-                ) : (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <Calculator className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                    <p>Isi data di sebelah kiri dan klik "Hitung Analisis"</p>
-                    <p className="text-sm mt-2">untuk melihat hasil perhitungan</p>
+                    <Button
+                      size="sm"
+                      variant={lampStatus === 'off' ? 'default' : 'outline'}
+                      className="flex-1"
+                      onClick={toggleLamp}
+                      disabled={lampStatus === 'off'}
+                    >
+                      <PowerOff className="h-4 w-4 mr-1" />
+                      OFF
+                    </Button>
                   </div>
-                )}
+                </CardContent>
+              </Card>
+              
+              {/* Feed Status */}
+              <Card className="glass cyber-border">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <Fish className="h-4 w-4 text-blue-400" />
+                      Feed Status
+                    </CardTitle>
+                    <Badge className={feedStatus === 'feeding' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30 animate-pulse' : 'bg-slate-500/20 text-slate-400 border-slate-500/30'}>
+                      {feedStatus.toUpperCase()}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    onClick={triggerFeed}
+                    disabled={feedStatus === 'feeding'}
+                  >
+                    <Fish className="h-4 w-4 mr-2" />
+                    {feedStatus === 'feeding' ? 'Feeding...' : 'Feed Now'}
+                  </Button>
+                </CardContent>
+              </Card>
+              
+              {/* Bot Status */}
+              <Card className="glass cyber-border">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <Bot className="h-4 w-4 text-purple-400" />
+                      Telegram Bot
+                    </CardTitle>
+                    <Badge className={botStatus === 'online' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}>
+                      {botStatus === 'online' ? 'Connected' : 'Disconnected'}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    <p>Bot is {botStatus === 'online' ? 'active' : 'inactive'}</p>
+                    <p>Webhook: <span className="text-green-400">Active</span></p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+            
+            {/* Quick Commands */}
+            <Card className="glass cyber-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Zap className="h-5 w-5 text-purple-400" />
+                  Quick Commands
+                </CardTitle>
+                <CardDescription>
+                  Send commands directly to Telegram Bot
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <Button
+                    variant="outline"
+                    className="justify-start glass"
+                    onClick={() => handleQuickCommand('/start', 'Start command sent')}
+                  >
+                    <Bot className="mr-2 h-4 w-4" />
+                    /start
+                    <ChevronRight className="ml-auto h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="justify-start glass"
+                    onClick={() => handleQuickCommand('/status', 'Status command sent')}
+                  >
+                    <Activity className="mr-2 h-4 w-4" />
+                    /status
+                    <ChevronRight className="ml-auto h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="justify-start glass"
+                    onClick={() => handleQuickCommand('/jadwal', 'Schedule command sent')}
+                  >
+                    <Calendar className="mr-2 h-4 w-4" />
+                    /jadwal
+                    <ChevronRight className="ml-auto h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="justify-start glass"
+                    onClick={() => handleQuickCommand('/lampuon', 'Lamp ON command sent')}
+                  >
+                    <Power className="mr-2 h-4 w-4" />
+                    Lampu ON
+                    <ChevronRight className="ml-auto h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="justify-start glass"
+                    onClick={() => handleQuickCommand('/lampuoff', 'Lamp OFF command sent')}
+                  >
+                    <PowerOff className="mr-2 h-4 w-4" />
+                    Lampu OFF
+                    <ChevronRight className="ml-auto h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="justify-start glass"
+                    onClick={() => handleQuickCommand('/pakan', 'Feed command sent')}
+                  >
+                    <Fish className="mr-2 h-4 w-4" />
+                    Pakan ON
+                    <ChevronRight className="ml-auto h-4 w-4" />
+                  </Button>
+                </div>
               </CardContent>
             </Card>
+            
+            <div className="grid gap-6 lg:grid-cols-2">
+              {/* Terminal Logs */}
+              <Card className="glass cyber-border">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Terminal className="h-5 w-5 text-green-400" />
+                    Terminal Logs
+                  </CardTitle>
+                  <CardDescription>
+                    Real-time system logs
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="terminal rounded-lg p-4 h-64 overflow-y-auto font-mono text-xs space-y-1 scanline relative">
+                    {logs.map((log) => (
+                      <div key={log.id} className={`${getLogColor(log.type)} flex gap-2`}>
+                        <span className="text-muted-foreground">
+                          [{new Date(log.timestamp).toLocaleTimeString('id-ID')}]
+                        </span>
+                        <span>{getLogIcon(log.type)}</span>
+                        <span>{log.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+              
+              {/* Schedules */}
+              <Card className="glass cyber-border">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Calendar className="h-5 w-5 text-blue-400" />
+                    Active Schedules
+                  </CardTitle>
+                  <CardDescription>
+                    Automated task schedules
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {schedules.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-8">
+                        No schedules configured
+                      </p>
+                    ) : (
+                      schedules.map((schedule, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between p-3 glass rounded-lg"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`
+                              w-8 h-8 rounded-lg flex items-center justify-center
+                              ${schedule.type === 'lampu' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-blue-500/20 text-blue-400'}
+                            `}>
+                              {schedule.type === 'lampu' ? <Lightbulb className="h-4 w-4" /> : <Fish className="h-4 w-4" />}
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium">
+                                {schedule.type === 'lampu' ? 'Lampu' : 'Pakan'} {schedule.action === 'on' ? 'ON' : schedule.action === 'off' ? 'OFF' : 'Feed'}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {schedule.time} Asia/Jakarta
+                              </p>
+                            </div>
+                          </div>
+                          <Badge variant="outline" className="glass">
+                            Active
+                          </Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
-        </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="bg-muted py-6 px-4 border-t mt-auto">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center space-y-2">
-            <p className="text-sm text-muted-foreground">
-              <strong>Disclaimer K3:</strong> Alat ini dikembangkan berdasarkan persamaan lifting NIOSH (National Institute for Occupational Safety and Health). Hasil perhitungan ini adalah estimasi dan harus digunakan sebagai panduan awal dalam assessment ergonomi.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Kalkulator ini tidak menggantikan assessment ergonomi yang dilakukan oleh profesional K3 yang tersertifikasi. Perusahaan/individu yang menggunakan alat ini bertanggung jawab penuh atas penggunaan dan interpretasi hasilnya.
-            </p>
-            <Separator className="my-4" />
-            <p className="text-xs text-muted-foreground">
-              NIOSH-based Lifting Calculator &copy; {new Date().getFullYear()} | Untuk tujuan assessment ergonomi dan Keselamatan Kerja (K3)
-            </p>
-          </div>
-        </div>
-      </footer>
+        </main>
+      </div>
     </div>
   )
 }
