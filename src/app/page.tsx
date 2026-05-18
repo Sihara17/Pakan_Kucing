@@ -58,9 +58,9 @@ export default function SyncroCommandDashboard() {
   
   // Terminal logs
   const [logs, setLogs] = useState<LogEntry[]>([
-    { id: 1, timestamp: new Date().toISOString(), type: 'info', message: 'SyncroCommand System initialized' },
-    { id: 2, timestamp: new Date().toISOString(), type: 'success', message: 'Telegram Bot connected' },
-    { id: 3, timestamp: new Date().toISOString(), type: 'info', message: 'Automation system ready' },
+    { id: Date.now() - 6000, timestamp: new Date(Date.now() - 6000).toISOString(), type: 'info', message: 'SyncroCommand System initialized' },
+    { id: Date.now() - 4000, timestamp: new Date(Date.now() - 4000).toISOString(), type: 'success', message: 'Telegram Bot connected' },
+    { id: Date.now() - 2000, timestamp: new Date(Date.now() - 2000).toISOString(), type: 'info', message: 'Automation system ready' },
   ])
   
   useEffect(() => {
@@ -96,7 +96,7 @@ export default function SyncroCommandDashboard() {
   
   function addLog(type: LogEntry['type'], message: string) {
     const newLog: LogEntry = {
-      id: logs.length + 1,
+      id: Date.now(),
       timestamp: new Date().toISOString(),
       type,
       message,
