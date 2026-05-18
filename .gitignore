@@ -46,6 +46,11 @@ dev.log
 test
 prompt
 
+*.tar
+node_modules
+dist
+.env
+
 server.log
 # Skills directory
 /skills/
