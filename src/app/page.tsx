@@ -121,11 +121,17 @@ export default function DashboardPage() {
       const res = await fetch('/api/schedule')
       const data = await res.json()
 
+      console.log('Schedules data:', data)
+
       if (data?.allSchedules) {
         setSchedules(data.allSchedules)
+        addLog('info', `Loaded ${data.allSchedules.length} schedules`)
+      } else {
+        addLog('warning', 'No schedules found in response')
       }
     } catch (err) {
-      console.log('schedule error')
+      console.log('schedule error:', err)
+      addLog('error', 'Failed to fetch schedules')
     }
   }
 
@@ -171,27 +177,37 @@ export default function DashboardPage() {
     }
 
     try {
-      await fetch('/api/schedule', {
+      const response = await fetch('/api/schedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: scheduleType,
           action: scheduleAction,
           time: scheduleTime,
+          chatId: 8385157031, // Chat ID dari environment
         }),
       })
 
-      addLog(
-        'success',
-        `Schedule ${scheduleType} ${scheduleAction} ${scheduleTime}`
-      )
+      const data = await response.json()
 
-      toast.success('Jadwal tersimpan ke server')
+      if (data.success) {
+        addLog(
+          'success',
+          `Schedule ${scheduleType} ${scheduleAction} ${scheduleTime}`
+        )
 
-      setScheduleTime('')
-      fetchSchedules()
+        toast.success('Jadwal tersimpan ke server')
+
+        setScheduleTime('')
+        fetchSchedules()
+      } else {
+        toast.error(data.error || 'Gagal tambah schedule')
+        addLog('error', data.error || 'Gagal tambah schedule')
+      }
     } catch (err) {
+      console.error('Add schedule error:', err)
       toast.error('Gagal tambah schedule')
+      addLog('error', 'Gagal tambah schedule')
     }
   }
 
@@ -318,13 +334,52 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 {schedules.length === 0 ? (
-                  <p className="text-zinc-400">Belum ada jadwal</p>
+                  <div className="text-center py-8">
+                    <Calendar className="h-12 w-12 mx-auto text-zinc-600 mb-3" />
+                    <p className="text-zinc-400">Belum ada jadwal</p>
+                    <p className="text-zinc-500 text-sm mt-1">Tambahkan jadwal di form atas</p>
+                  </div>
                 ) : (
-                  schedules.map((s, i) => (
-                    <div key={i} className="p-3 bg-zinc-800 rounded mb-2">
-                      {s.type} - {s.action} - {s.time}
-                    </div>
-                  ))
+                  <div className="space-y-3">
+                    {schedules.map((s, i) => (
+                      <div key={i} className="p-4 bg-zinc-800 rounded-lg border border-zinc-700">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className={`
+                              w-10 h-10 rounded-lg flex items-center justify-center
+                              ${s.type === 'lampu' 
+                                ? 'bg-yellow-500/20 text-yellow-400' 
+                                : 'bg-blue-500/20 text-blue-400'}
+                            `}>
+                              {s.type === 'lampu' ? <Lightbulb className="h-5 w-5" /> : <Cat className="h-5 w-5" />}
+                            </div>
+                            <div>
+                              <p className="font-medium text-white">
+                                {s.type === 'lampu' ? 'Lampu' : 'Pakan Kucing'}{' '}
+                                <span className={
+                                  s.action === 'on' ? 'text-green-400' : 
+                                  s.action === 'off' ? 'text-red-400' : 
+                                  'text-blue-400'
+                                }>
+                                  {s.action === 'feed' ? 'Feed' : s.action.toUpperCase()}
+                                </span>
+                              </p>
+                              <p className="text-sm text-zinc-400">
+                                {s.time} WIB
+                              </p>
+                            </div>
+                          </div>
+                          <Badge className={
+                            s.type === 'lampu' 
+                              ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' 
+                              : 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                          }>
+                            Aktif
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </CardContent>
             </Card>
